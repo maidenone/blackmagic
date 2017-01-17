@@ -61,6 +61,35 @@
 
 #define KL_GEN_PAGESIZE 0x400
 
+// Old Kinetis
+#define KINETIS_K_SDID_TYPE_MASK 0x00000FF0
+#define KINETIS_SDID_K_SERIES_MASK  0x0000FFFF
+#define KINETIS_K_SDID_K10_M50	 0x00000000
+#define KINETIS_K_SDID_K20_M50	 0x00000010
+/*
+#define KINETIS_K_SDID_K10_M72	 0x00000080
+#define KINETIS_K_SDID_K10_M100	 0x00000100
+#define KINETIS_K_SDID_K10_M120	 0x00000180
+#define KINETIS_K_SDID_K11		 0x00000220
+#define KINETIS_K_SDID_K12		 0x00000200
+#define KINETIS_K_SDID_K20_M72	 0x00000090
+#define KINETIS_K_SDID_K20_M100	 0x00000110
+#define KINETIS_K_SDID_K20_M120	 0x00000190
+#define KINETIS_K_SDID_K21_M50   0x00000230
+#define KINETIS_K_SDID_K21_M120	 0x00000330
+#define KINETIS_K_SDID_K22_M50   0x00000210
+#define KINETIS_K_SDID_K22_M120	 0x00000310
+#define KINETIS_K_SDID_K30_M72   0x000000A0
+#define KINETIS_K_SDID_K30_M100  0x00000120
+#define KINETIS_K_SDID_K40_M72   0x000000B0
+#define KINETIS_K_SDID_K40_M100  0x00000130
+#define KINETIS_K_SDID_K50_M72   0x000000E0
+#define KINETIS_K_SDID_K51_M72	 0x000000F0
+#define KINETIS_K_SDID_K53		 0x00000170
+#define KINETIS_K_SDID_K60_M100  0x00000140
+#define KINETIS_K_SDID_K60_M150  0x000001C0
+#define KINETIS_K_SDID_K70_M150  0x000001D0*/
+
 static int kl_gen_flash_erase(struct target_flash *f, target_addr addr, size_t len);
 static int kl_gen_flash_write(struct target_flash *f,
                               target_addr dest, const void *src, size_t len);
@@ -78,6 +107,23 @@ static void kl_gen_add_flash(target *t,
 	f->erased = 0xff;
 	target_add_flash(t, f);
 }
+
+// K vs KL SDID
+// [3-0] Pinout, same on K and KL
+// [6-4] Device type K, reserved on KL
+// 000 K10
+// 001 K20
+
+// [11-7] DIEID on KL, reserved on K
+// [15-12] REV ID same on K and KL
+// [19-16] SRAM size on KL, reserved on K
+// [23-20] SERIESID on KL, reserved on K
+// [27-24] SUBFAMID on KL, reserved on K
+// [31-28] FAMID on KL, reserved on K
+
+// reserved will always be 0
+// device type will be 000 for K10 and any KL.
+// DIEID,SRAM,SERIESID,SUBFAMID or FAMID can be used to distinguish between K and KL
 
 bool kinetis_probe(target *t)
 {
@@ -116,10 +162,71 @@ bool kinetis_probe(target *t)
 				kl_gen_add_flash(t, 0x00000000, 0x1FFF, 0x400);
 				break;
 			default:
-				return false;
+				break;
 			}
 		return true;
 	}
+	uint32_t mcu_type = sdid & KINETIS_K_SDID_TYPE_MASK;
+
+	switch (mcu_type) {
+		case KINETIS_K_SDID_K10_M50:
+		case KINETIS_K_SDID_K20_M50:
+			t->driver = "K10xM50 / K20xM50";
+			target_add_ram(t, 0x1fffe000, 0x2000);
+			target_add_ram(t, 0x20000000, 0x2000);
+			kl_gen_add_flash(t, 0x00000000, 0x40000, 0x400);
+			return true;
+	/*	case KINETIS_K_SDID_K10_M72:
+		case KINETIS_K_SDID_K20_M72:
+		case KINETIS_K_SDID_K30_M72:
+		case KINETIS_K_SDID_K30_M100:
+		case KINETIS_K_SDID_K40_M72:
+		case KINETIS_K_SDID_K40_M100:
+		case KINETIS_K_SDID_K50_M72:
+			// 2kB sectors, 1kB FlexNVM sectors 
+			pflash_sector_size_bytes = 2<<10;
+			nvm_sector_size_bytes = 1<<10;
+			num_blocks = 2;
+			kinfo->flash_support = FS_PROGRAM_LONGWORD | FS_PROGRAM_SECTOR | FS_INVALIDATE_CACHE_K;
+			kinfo->max_flash_prog_size = 1<<10;
+			break;
+		case KINETIS_K_SDID_K10_M100:
+		case KINETIS_K_SDID_K20_M100:
+		case KINETIS_K_SDID_K11:
+		case KINETIS_K_SDID_K12:
+		case KINETIS_K_SDID_K21_M50:
+		case KINETIS_K_SDID_K22_M50:
+		case KINETIS_K_SDID_K51_M72:
+		case KINETIS_K_SDID_K53:
+		case KINETIS_K_SDID_K60_M100:
+			// 2kB sectors 
+			pflash_sector_size_bytes = 2<<10;
+			nvm_sector_size_bytes = 2<<10;
+			num_blocks = 2;
+			kinfo->flash_support = FS_PROGRAM_LONGWORD | FS_PROGRAM_SECTOR | FS_INVALIDATE_CACHE_K;
+			break;
+		case KINETIS_K_SDID_K21_M120:
+		case KINETIS_K_SDID_K22_M120:
+			// 4kB sectors (MK21FN1M0, MK21FX512, MK22FN1M0, MK22FX512)
+			pflash_sector_size_bytes = 4<<10;
+			kinfo->max_flash_prog_size = 1<<10;
+			nvm_sector_size_bytes = 4<<10;
+			num_blocks = 2;
+			kinfo->flash_support = FS_PROGRAM_PHRASE | FS_PROGRAM_SECTOR | FS_INVALIDATE_CACHE_K;
+			break;
+		case KINETIS_K_SDID_K10_M120:
+		case KINETIS_K_SDID_K20_M120:
+		case KINETIS_K_SDID_K60_M150:
+		case KINETIS_K_SDID_K70_M150:
+			// 4kB sectors
+			pflash_sector_size_bytes = 4<<10;
+			nvm_sector_size_bytes = 4<<10;
+			num_blocks = 4;
+			kinfo->flash_support = FS_PROGRAM_PHRASE | FS_PROGRAM_SECTOR | FS_INVALIDATE_CACHE_K;
+			break;*/
+		default:
+			return false;
+		}
 	return false;
 }
 
